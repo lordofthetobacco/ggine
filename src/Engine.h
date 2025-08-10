@@ -34,6 +34,9 @@ private:
     void setFullscreen(bool enable);
     void setWindowClientSize(UINT width, UINT height);
     std::vector<uint8_t> readFileBytes(const std::wstring& path);
+    void initAssetsDir();
+    void scanAssets();
+
     UINT clientWidth; UINT clientHeight; HWND hwnd;
     Microsoft::WRL::ComPtr<IDXGIFactory6> dxgiFactory;
     Microsoft::WRL::ComPtr<ID3D12Device> device;
@@ -58,4 +61,8 @@ private:
     std::vector<float> frameTimeMs; size_t frameTimeWriteIdx{0}; LARGE_INTEGER perfFreq{}; LARGE_INTEGER lastCounter{}; bool timingInitialized{false};
     Scene scene; enum class SelectionKind { None, Camera, Mesh, Light }; SelectionKind selectionKind{SelectionKind::Mesh}; int selectedIndex{0};
     bool isFullscreen{false}; DWORD windowStyle{0}; RECT windowRect{0,0,0,0};
+
+    std::wstring assetsDirW{};
+    std::vector<std::wstring> assetObjFiles;
+    double assetsRescanAccum{0.0};
 };

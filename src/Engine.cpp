@@ -50,7 +50,7 @@ bool Engine::initialize(HWND windowHandle) {
     if (FAILED(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&dxgiFactory)))) return false; BOOL allowTearing = FALSE; if (SUCCEEDED(dxgiFactory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)))) tearingSupported = allowTearing == TRUE; ComPtr<IDXGIAdapter1> ad = SelectHardwareAdapter(dxgiFactory); if (ad) { if (FAILED(D3D12CreateDevice(ad.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)))) return false; } else { ComPtr<IDXGIAdapter> warp; if (FAILED(dxgiFactory->EnumWarpAdapter(IID_PPV_ARGS(&warp)))) return false; if (FAILED(D3D12CreateDevice(warp.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)))) return false; }
     D3D12_COMMAND_QUEUE_DESC q{}; q.Type = D3D12_COMMAND_LIST_TYPE_DIRECT; q.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE; if (FAILED(device->CreateCommandQueue(&q, IID_PPV_ARGS(&commandQueue)))) return false; createSwapChain(); rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV); D3D12_DESCRIPTOR_HEAP_DESC rtv{}; rtv.NumDescriptors = kFrameCount; rtv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; if (FAILED(device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&rtvDescriptorHeap)))) return false; D3D12_DESCRIPTOR_HEAP_DESC dsv{}; dsv.NumDescriptors = 1; dsv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV; if (FAILED(device->CreateDescriptorHeap(&dsv, IID_PPV_ARGS(&dsvDescriptorHeap)))) return false; createRenderTargets(); createDepthResources(); for (UINT i=0;i<kFrameCount;++i) { if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators[i])))) return false; }
     if (FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocators[currentFrameIndex].Get(), nullptr, IID_PPV_ARGS(&commandList)))) return false; commandList->Close(); if (FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) return false; fenceValues[currentFrameIndex]=1; fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr); if (!fenceEvent) return false; if (!createPipeline()) return false; if (!createCubeObject(L"Cube")) return false; createLightObject(L"Light"); for (UINT i=0;i<kFrameCount;++i) { D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD; D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = 256; rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR; if (FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&cameraCBs[i])))) return false; D3D12_RANGE rr{0,0}; cameraCBs[i]->Map(0, &rr, reinterpret_cast<void**>(&cameraCBMapped[i])); }
-    if (!initImGui()) return false; frameTimeMs.assign(240,0.0f); QueryPerformanceFrequency(&perfFreq); QueryPerformanceCounter(&lastCounter); timingInitialized = true; scene.selectedMesh = scene.meshes.empty() ? -1 : 0; return true;
+    if (!initImGui()) return false; frameTimeMs.assign(240,0.0f); QueryPerformanceFrequency(&perfFreq); QueryPerformanceCounter(&lastCounter); timingInitialized = true; scene.selectedMesh = scene.meshes.empty() ? -1 : 0; initAssetsDir(); scanAssets(); return true;
 }
 
 bool Engine::createPipeline() {
@@ -68,6 +68,7 @@ void Engine::createDepthResources() { D3D12_RESOURCE_DESC d{}; d.Dimension = D3D
 
 void Engine::update(double dt) {
     ImGuiIO& io = ImGui::GetIO(); bool usingMouse = (GetKeyState(VK_RBUTTON) & 0x8000) && !io.WantCaptureMouse; POINT p; GetCursorPos(&p); ScreenToClient(hwnd, &p); static bool first = true; if (first) { lastMouse = p; first = false; } float dx = float(p.x - lastMouse.x); float dy = float(p.y - lastMouse.y); lastMouse = p; if (usingMouse) { const float sensitivity = 0.005f; cameraYaw += dx * sensitivity; cameraPitch -= dy * sensitivity; const float limit = XM_PIDIV2 - 0.01f; if (cameraPitch > limit) cameraPitch = limit; if (cameraPitch < -limit) cameraPitch = -limit; } XMVECTOR forward = XMVectorSet(cosf(cameraPitch) * sinf(cameraYaw), sinf(cameraPitch), cosf(cameraPitch) * cosf(cameraYaw), 0.0f); XMVECTOR right = XMVector3Normalize(XMVector3Cross(XMVectorSet(0,1,0,0), forward)); XMVECTOR up = XMVectorSet(0,1,0,0); float move = 3.0f * static_cast<float>(dt); if (!io.WantCaptureKeyboard) { if (GetAsyncKeyState('W') & 0x8000) { XMVECTOR p0 = XMLoadFloat3(&cameraPosition); XMStoreFloat3(&cameraPosition, XMVectorAdd(p0, XMVectorScale(forward, move))); } if (GetAsyncKeyState('S') & 0x8000) { XMVECTOR p0 = XMLoadFloat3(&cameraPosition); XMStoreFloat3(&cameraPosition, XMVectorSubtract(p0, XMVectorScale(forward, move))); } if (GetAsyncKeyState('A') & 0x8000) { XMVECTOR p0 = XMLoadFloat3(&cameraPosition); XMStoreFloat3(&cameraPosition, XMVectorSubtract(p0, XMVectorScale(right, move))); } if (GetAsyncKeyState('D') & 0x8000) { XMVECTOR p0 = XMLoadFloat3(&cameraPosition); XMStoreFloat3(&cameraPosition, XMVectorAdd(p0, XMVectorScale(right, move))); } if (GetAsyncKeyState('Q') & 0x8000) { XMVECTOR p0 = XMLoadFloat3(&cameraPosition); XMStoreFloat3(&cameraPosition, XMVectorSubtract(p0, XMVectorScale(up, move))); } if (GetAsyncKeyState('E') & 0x8000) { XMVECTOR p0 = XMLoadFloat3(&cameraPosition); XMStoreFloat3(&cameraPosition, XMVectorAdd(p0, XMVectorScale(up, move))); } }
+    assetsRescanAccum += dt; if (assetsRescanAccum > 1.0) { assetsRescanAccum = 0.0; scanAssets(); }
 }
 
 void Engine::setWindowClientSize(UINT width, UINT height) { RECT wr{0,0,(LONG)width,(LONG)height}; AdjustWindowRectEx(&wr, GetWindowLong(hwnd, GWL_STYLE), FALSE, GetWindowLong(hwnd, GWL_EXSTYLE)); SetWindowPos(hwnd, nullptr, 0, 0, wr.right - wr.left, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE); }
@@ -78,6 +79,8 @@ void Engine::render() {
     LARGE_INTEGER now; if (timingInitialized) { QueryPerformanceCounter(&now); double ms = double(now.QuadPart - lastCounter.QuadPart) * 1000.0 / double(perfFreq.QuadPart); lastCounter = now; if (!frameTimeMs.empty()) { frameTimeMs[frameTimeWriteIdx] = static_cast<float>(ms); frameTimeWriteIdx = (frameTimeWriteIdx + 1) % frameTimeMs.size(); }}
     if (frameLatencyWaitableObject) WaitForSingleObject(frameLatencyWaitableObject, 1000);
     commandAllocators[currentFrameIndex]->Reset();
+    if (selectionKind==SelectionKind::Mesh && (selectedIndex < 0 || selectedIndex >= (int)scene.meshes.size())) { selectionKind = SelectionKind::None; selectedIndex = -1; }
+    if (selectionKind==SelectionKind::Light && (selectedIndex < 0 || selectedIndex >= (int)scene.lights.size())) { selectionKind = SelectionKind::None; selectedIndex = -1; }
     commandList->Reset(commandAllocators[currentFrameIndex].Get(), nullptr);
     ID3D12DescriptorHeap* heaps[] = { imguiSrvHeap.Get() };
     commandList->SetDescriptorHeaps(1, heaps);
@@ -112,24 +115,16 @@ void Engine::render() {
         }
     }
     if (ImGui::CollapsingHeader("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
+        int meshToDelete = -1;
+        int meshToDuplicate = -1;
         for (int i=0;i<(int)scene.meshes.size();++i) {
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ((selectionKind==SelectionKind::Mesh && selectedIndex==i)?ImGuiTreeNodeFlags_Selected:0);
             std::string utf8(scene.meshes[i].name.begin(), scene.meshes[i].name.end());
             ImGui::TreeNodeEx((void*)(intptr_t)(1000+i), flags, "%s", utf8.c_str());
             if (ImGui::IsItemClicked()) { selectionKind = SelectionKind::Mesh; selectedIndex = i; }
             if (ImGui::BeginPopupContextItem((std::string("MeshCtx")+std::to_string(i)).c_str())) {
-                if (ImGui::MenuItem("Duplicate")) {
-                    MeshObject copy = scene.meshes[i];
-                    copy.name += L" (copy)";
-                    scene.meshes.push_back(copy);
-                    selectionKind = SelectionKind::Mesh; selectedIndex = (int)scene.meshes.size()-1;
-                    ImGui::CloseCurrentPopup();
-                }
-                if (ImGui::MenuItem("Delete")) {
-                    scene.meshes.erase(scene.meshes.begin()+i);
-                    selectionKind = SelectionKind::None; selectedIndex = -1;
-                    ImGui::CloseCurrentPopup();
-                }
+                if (ImGui::MenuItem("Duplicate")) { meshToDuplicate = i; ImGui::CloseCurrentPopup(); }
+                if (ImGui::MenuItem("Delete")) { meshToDelete = i; ImGui::CloseCurrentPopup(); }
                 static char renameBuf[128] = {};
                 if (ImGui::IsWindowAppearing()) {
                     std::string n(scene.meshes[i].name.begin(), scene.meshes[i].name.end());
@@ -145,26 +140,28 @@ void Engine::render() {
                 ImGui::EndPopup();
             }
         }
+        if (meshToDuplicate >= 0 && meshToDuplicate < (int)scene.meshes.size()) {
+            MeshObject copy = scene.meshes[meshToDuplicate];
+            copy.name += L" (copy)";
+            scene.meshes.push_back(copy);
+            selectionKind = SelectionKind::Mesh; selectedIndex = (int)scene.meshes.size()-1;
+        }
+        if (meshToDelete >= 0 && meshToDelete < (int)scene.meshes.size()) {
+            scene.meshes.erase(scene.meshes.begin()+meshToDelete);
+            selectionKind = SelectionKind::None; selectedIndex = -1;
+        }
     }
     if (ImGui::CollapsingHeader("Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
+        int lightToDelete = -1;
+        int lightToDuplicate = -1;
         for (int i=0;i<(int)scene.lights.size();++i) {
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ((selectionKind==SelectionKind::Light && selectedIndex==i)?ImGuiTreeNodeFlags_Selected:0);
             std::string utf8(scene.lights[i].name.begin(), scene.lights[i].name.end());
             ImGui::TreeNodeEx((void*)(intptr_t)(2000+i), flags, "%s", utf8.c_str());
             if (ImGui::IsItemClicked()) { selectionKind = SelectionKind::Light; selectedIndex = i; }
             if (ImGui::BeginPopupContextItem((std::string("LightCtx")+std::to_string(i)).c_str())) {
-                if (ImGui::MenuItem("Duplicate")) {
-                    LightObject copy = scene.lights[i];
-                    copy.name += L" (copy)";
-                    scene.lights.push_back(copy);
-                    selectionKind = SelectionKind::Light; selectedIndex = (int)scene.lights.size()-1;
-                    ImGui::CloseCurrentPopup();
-                }
-                if (ImGui::MenuItem("Delete")) {
-                    scene.lights.erase(scene.lights.begin()+i);
-                    selectionKind = SelectionKind::None; selectedIndex = -1;
-                    ImGui::CloseCurrentPopup();
-                }
+                if (ImGui::MenuItem("Duplicate")) { lightToDuplicate = i; ImGui::CloseCurrentPopup(); }
+                if (ImGui::MenuItem("Delete")) { lightToDelete = i; ImGui::CloseCurrentPopup(); }
                 static char lrename[128] = {};
                 if (ImGui::IsWindowAppearing()) {
                     std::string n(scene.lights[i].name.begin(), scene.lights[i].name.end());
@@ -179,6 +176,16 @@ void Engine::render() {
                 if (ImGui::MenuItem("Add New Light")) { createLightObject(L"Light"); }
                 ImGui::EndPopup();
             }
+        }
+        if (lightToDuplicate >= 0 && lightToDuplicate < (int)scene.lights.size()) {
+            LightObject copy = scene.lights[lightToDuplicate];
+            copy.name += L" (copy)";
+            scene.lights.push_back(copy);
+            selectionKind = SelectionKind::Light; selectedIndex = (int)scene.lights.size()-1;
+        }
+        if (lightToDelete >= 0 && lightToDelete < (int)scene.lights.size()) {
+            scene.lights.erase(scene.lights.begin()+lightToDelete);
+            selectionKind = SelectionKind::None; selectedIndex = -1;
         }
     }
     ImGui::End();
@@ -212,6 +219,21 @@ void Engine::render() {
     }
     ImGui::End();
 
+    ImGui::Begin("Assets");
+    ImGui::Text("Folder: %ls", assetsDirW.c_str());
+    static int selectedAsset = -1;
+    for (int i=0;i<(int)assetObjFiles.size();++i) {
+        std::string name(assetObjFiles[i].begin(), assetObjFiles[i].end());
+        bool sel = (selectedAsset==i);
+        if (ImGui::Selectable(name.c_str(), sel)) selectedAsset = i;
+    }
+    if (selectedAsset>=0 && selectedAsset<(int)assetObjFiles.size()) {
+        if (ImGui::Button("Add Selected OBJ")) {
+            createObjObject(assetObjFiles[selectedAsset], L"OBJ");
+        }
+    }
+    ImGui::End();
+
     ImGui::Render();
 
     D3D12_RESOURCE_BARRIER toRT{};
@@ -240,7 +262,8 @@ void Engine::render() {
     float aspect = clientWidth > 0 ? float(clientWidth) / float(clientHeight ? clientHeight : 1) : 1.0f;
     XMMATRIX proj = XMMatrixPerspectiveFovLH(0.9f, aspect, 0.1f, 100.0f);
 
-    for (const auto& obj : scene.meshes) {
+    for (size_t i=0; i<scene.meshes.size(); ++i) {
+        const auto& obj = scene.meshes[i];
         if (!obj.vertexBuffer) continue;
         XMMATRIX S = XMMatrixScaling(obj.transform.scale.x, obj.transform.scale.y, obj.transform.scale.z);
         XMMATRIX R = XMMatrixRotationRollPitchYaw(XMConvertToRadians(obj.transform.rotationEuler.x), XMConvertToRadians(obj.transform.rotationEuler.y), XMConvertToRadians(obj.transform.rotationEuler.z));
@@ -278,3 +301,30 @@ void Engine::waitForGpu() { commandQueue->Signal(fence.Get(), fenceValues[curren
 void Engine::resize(UINT width, UINT height) { if (!swapChain) { clientWidth = width; clientHeight = height; return; } if (width==0 || height==0) return; waitForGpu(); for (UINT i=0;i<kFrameCount;++i) renderTargets[i].Reset(); depthStencil.Reset(); DXGI_SWAP_CHAIN_DESC desc{}; swapChain->GetDesc(&desc); if (FAILED(swapChain->ResizeBuffers(kFrameCount, width, height, desc.BufferDesc.Format, desc.Flags))) return; swapChain->SetMaximumFrameLatency(kFrameCount); frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject(); currentFrameIndex = swapChain->GetCurrentBackBufferIndex(); createRenderTargets(); clientWidth=width; clientHeight=height; viewport.Width = (float)width; viewport.Height = (float)height; scissorRect.right = (LONG)width; scissorRect.bottom = (LONG)height; createDepthResources(); }
 
 Engine::~Engine() { if (commandQueue && fence && fenceEvent) waitForGpu(); ImGui_ImplDX12_Shutdown(); ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext(); if (fenceEvent) CloseHandle(fenceEvent); }
+
+void Engine::initAssetsDir() {
+    std::filesystem::path base = std::filesystem::path(L".");
+    std::filesystem::path assets = base / L"assets";
+    if (!std::filesystem::exists(assets)) {
+        std::error_code ec; std::filesystem::create_directories(assets, ec);
+    }
+    assetsDirW = assets.wstring();
+}
+
+void Engine::scanAssets() {
+    assetObjFiles.clear();
+    if (assetsDirW.empty()) return;
+    std::filesystem::path root(assetsDirW);
+    std::error_code ec;
+    for (auto& entry : std::filesystem::directory_iterator(root, ec)) {
+        if (!entry.is_regular_file()) continue;
+        auto p = entry.path();
+        if (p.has_extension()) {
+            auto ext = p.extension().wstring();
+            for (auto& c : ext) c = (wchar_t)towlower(c);
+            if (ext == L".obj") {
+                assetObjFiles.push_back(p.wstring());
+            }
+        }
+    }
+}
